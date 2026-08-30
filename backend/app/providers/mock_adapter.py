@@ -39,17 +39,24 @@ class MockAdapter(LLMProviderAdapter):
         context_limit: int = 8192,
         simulated_latency_ms: int = 50,
         failure_mode: str | None = None,
+        canned_response_text: str | None = None,
     ):
         """
         failure_mode: None, "timeout", "rate_limit", "invalid_credentials",
         or "unavailable" - lets tests exercise the router's fallback logic
         without needing a real provider to actually fail.
+
+        canned_response_text: if set, send_request returns exactly this
+        text instead of the default echo - useful for testing consumers
+        (e.g. the LLM-judge evaluator) that need to control what the
+        "model" says without a real API call.
         """
         self.provider_name = provider_name
         self.model_name = model_name
         self.context_limit = context_limit
         self.simulated_latency_ms = simulated_latency_ms
         self.failure_mode = failure_mode
+        self.canned_response_text = canned_response_text
 
     def estimate_tokens(self, prompt: str, params: RequestParams) -> TokenEstimate:
         return TokenEstimate(
@@ -69,8 +76,9 @@ class MockAdapter(LLMProviderAdapter):
 
         start = time.monotonic()
         # Deterministic-ish "response": echoes a summary of the prompt so
-        # tests can assert on content without needing a real model.
-        response_text = f"[mock:{self.model_name}] response to: {prompt[:80]}"
+        # tests can assert on content without needing a real model,
+        # unless a canned_response_text was provided at construction.
+        response_text = self.canned_response_text or f"[mock:{self.model_name}] response to: {prompt[:80]}"
         input_tokens = estimate_token_count(prompt)
         output_tokens = estimate_token_count(response_text)
         elapsed_ms = int((time.monotonic() - start) * 1000) + self.simulated_latency_ms
