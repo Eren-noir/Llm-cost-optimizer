@@ -7,7 +7,10 @@ Run locally with:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
+from app.api.models import router as models_router
+from app.api.requests import router as requests_router
 from app.core.errors import register_error_handlers
 
 app = FastAPI(
@@ -28,6 +31,9 @@ app.add_middleware(
 register_error_handlers(app)
 
 app.include_router(health_router)
+app.include_router(requests_router)
+app.include_router(models_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/")

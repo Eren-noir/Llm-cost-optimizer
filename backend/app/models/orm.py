@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     ForeignKey,
@@ -16,19 +17,28 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    Uuid,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
 
+# Portable types: native UUID + JSONB on PostgreSQL (production), sensible
+# fallbacks (CHAR(32) + JSON/TEXT) on SQLite - lets the full ORM layer be
+# exercised against an in-memory SQLite DB in environments without a live
+# Postgres instance (see tests/test_persistence.py), while still getting
+# JSONB's indexing/query advantages in production.
+PortableUuid = Uuid(as_uuid=True)
+PortableJSON = JSON().with_variant(JSONB(), "postgresql")
+
 
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -40,8 +50,8 @@ class User(Base):
 class BudgetSettings(Base):
     __tablename__ = "budget_settings"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     monthly_budget_usd: Mapped[float] = mapped_column(Numeric(10, 4), nullable=False)
     min_quality_threshold: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -56,7 +66,7 @@ class BudgetSettings(Base):
 class Provider(Base):
     __tablename__ = "providers"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
@@ -66,11 +76,11 @@ class Provider(Base):
 class LLMModel(Base):
     __tablename__ = "models"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    provider_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    provider_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("providers.id", ondelete="CASCADE"), nullable=False)
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
     context_limit: Mapped[int] = mapped_column(Integer, nullable=False)
-    capabilities: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    capabilities: Mapped[dict] = mapped_column(PortableJSON, nullable=False, default=dict)
     estimated_quality: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
@@ -86,8 +96,8 @@ class LLMModel(Base):
 class PricingHistory(Base):
     __tablename__ = "pricing_history"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    model_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("models.id", ondelete="CASCADE"), nullable=False)
     input_price_per_1k: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False)
     output_price_per_1k: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False)
     effective_from: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -101,12 +111,12 @@ class RequestLog(Base):
 
     __tablename__ = "requests"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
     estimated_complexity: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False)
+    model_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("models.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
@@ -129,11 +139,11 @@ class RequestLog(Base):
 class ResponseLog(Base):
     __tablename__ = "responses"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
     finish_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    raw_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_response: Mapped[dict | None] = mapped_column(PortableJSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     request: Mapped["RequestLog"] = relationship(back_populates="response")
@@ -142,8 +152,8 @@ class ResponseLog(Base):
 class UsageMetrics(Base):
     __tablename__ = "usage_metrics"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
     input_tokens_estimated: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens_estimated: Mapped[int | None] = mapped_column(Integer, nullable=True)
     input_tokens_actual: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -158,8 +168,8 @@ class UsageMetrics(Base):
 class QualityEvaluation(Base):
     __tablename__ = "quality_evaluations"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
     quality_score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     evaluation_method: Mapped[str] = mapped_column(String(20), nullable=False)
     evaluator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -176,11 +186,11 @@ class QualityEvaluation(Base):
 class OptimizationResult(Base):
     __tablename__ = "optimization_results"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(PortableUuid, primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("requests.id", ondelete="CASCADE"), unique=True, nullable=False)
     routing_strategy: Mapped[str] = mapped_column(String(50), nullable=False)
-    candidates_considered: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    chosen_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False)
+    candidates_considered: Mapped[dict] = mapped_column(PortableJSON, nullable=False)
+    chosen_model_id: Mapped[uuid.UUID] = mapped_column(PortableUuid, ForeignKey("models.id"), nullable=False)
     chosen_reason: Mapped[str] = mapped_column(Text, nullable=False)
     fallback_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
