@@ -11,6 +11,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
 from app.api.models import router as models_router
 from app.api.requests import router as requests_router
+from app.api.simulator import router as simulator_router
 from app.core.errors import register_error_handlers
 
 app = FastAPI(
@@ -19,7 +20,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Frontend runs on a different origin during development.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -34,6 +34,7 @@ app.include_router(health_router)
 app.include_router(requests_router)
 app.include_router(models_router)
 app.include_router(dashboard_router)
+app.include_router(simulator_router)
 
 
 @app.get("/")
