@@ -1,0 +1,11 @@
+[
+  {"id":"simple_001","category":"simple","prompt":"What is the capital of Kenya?","quality_criteria":["Correct capital","Concise answer"]},
+  {"id":"simple_002","category":"simple","prompt":"Summarize this sentence in five words: The operating system manages hardware and software resources.","quality_criteria":["Five words or fewer","Preserves meaning"]},
+  {"id":"simple_003","category":"simple","prompt":"Convert the binary number 1010 to decimal.","quality_criteria":["Correct conversion","Shows understandable reasoning"]},
+  {"id":"medium_001","category":"medium","prompt":"Explain the difference between a process and a thread and give one practical example of when threads are useful.","quality_criteria":["Correct distinction","Practical example","Clear explanation"]},
+  {"id":"medium_002","category":"medium","prompt":"Write a Python function that checks whether a string is a palindrome, ignoring spaces and letter case. Explain its time complexity.","quality_criteria":["Correct code","Handles spaces/case","Correct complexity"]},
+  {"id":"medium_003","category":"medium","prompt":"Compare BFS and DFS for graph traversal. State their typical time complexity using adjacency lists and one use case for each.","quality_criteria":["Correct comparison","Correct complexity","Valid use cases"]},
+  {"id":"complex_001","category":"complex","prompt":"Design an approach for detecting cycles in a directed graph, explain why it works, give pseudocode, and analyze its time and space complexity.","quality_criteria":["Correct algorithm","Sound explanation","Pseudocode","Complexity analysis"]},
+  {"id":"complex_002","category":"complex","prompt":"A web application uses several LLM providers with different input and output prices. Design a routing strategy that minimizes expected cost while enforcing a minimum quality threshold. Discuss failure handling and how you would evaluate whether the strategy actually saves money.","quality_criteria":["Optimization formulation","Routing strategy","Failure handling","Evaluation methodology"]},
+  {"id":"complex_003","category":"complex","prompt":"Explain how a dynamic programming solution for Longest Common Subsequence is derived from the recurrence relation. Include the base cases, recurrence, and time and space complexity.","quality_criteria":["Correct recurrence","Base cases","Derivation","Complexity"]}
+]
