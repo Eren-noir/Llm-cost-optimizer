@@ -13,9 +13,10 @@ class SubmitTaskRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     mode: Literal["manual", "comparison", "auto"] = "auto"
     min_quality: int = Field(default=0, ge=0, le=100)
-    remaining_budget_usd: Decimal | None = None
+    remaining_budget_usd: Decimal | None = Field(default=None, ge=0)
     manual_model_id: str | None = None
-    model_ids: list[str] | None = None  # used by comparison mode
+    model_ids: list[str] | None = None
+    routing_strategy: Literal["baseline", "weighted_scoring"] = "baseline"
 
 
 class CandidateConsideredOut(BaseModel):
