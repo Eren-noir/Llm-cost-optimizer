@@ -50,16 +50,18 @@ class CandidateEvaluation:
     expected_latency_ms: int | None = None
 
     def as_dict(self) -> dict:
-        return {
+        result = {
             "model_id": self.model_id,
             "provider_name": self.provider_name,
             "model_name": self.model_name,
             "estimated_quality": self.estimated_quality,
             "estimated_cost_usd": str(self.estimated_cost.total_cost_usd),
-            "expected_latency_ms": self.expected_latency_ms,
             "eligible": self.eligible,
             "ineligible_reason": self.ineligible_reason,
         }
+        if self.expected_latency_ms is not None:
+            result["expected_latency_ms"] = self.expected_latency_ms
+        return result
 
 
 @dataclass(frozen=True)
