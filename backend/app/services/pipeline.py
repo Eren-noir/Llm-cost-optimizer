@@ -1,19 +1,17 @@
 """
-Request pipeline - orchestrates the full flow described in
-docs/02-architecture.md §4 "Data Flow (request lifecycle)":
+Request pipeline - orchestrates the full request lifecycle:
 
     Task Analyzer -> Model Router -> Provider Adapter -> Cost Engine
     -> Quality Evaluator -> Persistence
 
-This is the one place that wires Phases 5-8 together end to end. The
-API layer calls this; it does not re-implement any of this
-orchestration itself.
+The API layer calls this function; it does not duplicate orchestration.
 """
 from __future__ import annotations
 
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -28,10 +26,12 @@ from app.services.task_analyzer import DEFAULT_OUTPUT_TOKENS_BY_COMPLEXITY, esti
 
 
 def _load_candidates(db: Session) -> list[ModelCandidate]:
-    """Pull active models + their current price from the registry and
-    turn them into router-ready ModelCandidate objects."""
-    from sqlalchemy import select
+    """Load active, priced models and attach historical average latency.
 
+    Latency is advisory only: a model with no history gets ``None`` and
+    remains eligible. This avoids making a new model unusable merely because
+    it has not served a request yet.
+    """
     from app.services.pricing_repository import PricingNotFoundError, get_current_pricing
 
     rows = db.execute(
@@ -41,12 +41,24 @@ def _load_candidates(db: Session) -> list[ModelCandidate]:
         .where(orm.Provider.status == "active")
     ).all()
 
-    candidates = []
+    latency_rows = db.execute(
+        select(orm.RequestLog.model_id, func.avg(orm.UsageMetrics.latency_ms))
+        .join(orm.UsageMetrics, orm.UsageMetrics.request_id == orm.RequestLog.id)
+        .where(orm.RequestLog.status.in_(["success", "fallback_used"]))
+        .group_by(orm.RequestLog.model_id)
+    ).all()
+    avg_latency_by_model = {
+        str(model_id): int(round(float(avg_latency)))
+        for model_id, avg_latency in latency_rows
+        if avg_latency is not None
+    }
+
+    candidates: list[ModelCandidate] = []
     for model_row, provider_row in rows:
         try:
             pricing = get_current_pricing(db, model_row.id)
         except PricingNotFoundError:
-            continue  # skip models with no priced entry rather than failing the whole request
+            continue
         candidates.append(
             ModelCandidate(
                 model_id=str(model_row.id),
@@ -56,6 +68,7 @@ def _load_candidates(db: Session) -> list[ModelCandidate]:
                 pricing=pricing,
                 context_limit=model_row.context_limit,
                 status=model_row.status,
+                expected_latency_ms=avg_latency_by_model.get(str(model_row.id)),
             )
         )
     return candidates
@@ -69,44 +82,41 @@ def run_request_pipeline(
     min_quality: int = 0,
     remaining_budget_usd: Decimal | None = None,
     manual_model_id: str | None = None,
+    routing_strategy: str = "baseline",
 ) -> orm.RequestLog:
-    """Runs one task through the full pipeline and persists every
-    stage. Returns the persisted RequestLog (with its relationships
-    loaded) so the API layer can serialize it directly.
-
-    mode='manual' requires manual_model_id and skips routing.
-    mode='auto' (default) routes automatically under the given
-    constraints. mode='comparison' fans out to multiple models and is
-    handled separately in the API layer - it doesn't fit this
-    single-model-per-call shape.
-    """
+    """Run one task through analysis, routing, provider, cost, evaluation and persistence."""
     complexity = estimate_complexity(prompt)
     expected_output_tokens = DEFAULT_OUTPUT_TOKENS_BY_COMPLEXITY[complexity.complexity]
-
     candidates = _load_candidates(db)
 
-    if mode == "manual":
+    if mode in {"manual", "comparison"}:
         if not manual_model_id:
-            raise AppError("manual_model_id is required when mode='manual'")
+            raise AppError(f"manual_model_id is required when mode='{mode}'")
         chosen_candidate = next((c for c in candidates if c.model_id == manual_model_id), None)
         if chosen_candidate is None:
             raise AppError(f"Model {manual_model_id} not found or not active/priced")
-        routing_strategy = "manual"
+        routing_strategy_used = "manual"
         routing_reason = f"User manually selected '{chosen_candidate.model_name}'."
-        candidates_considered_dicts = [
-            {
-                "model_id": chosen_candidate.model_id,
-                "provider_name": chosen_candidate.provider_name,
-                "model_name": chosen_candidate.model_name,
-                "estimated_quality": chosen_candidate.estimated_quality,
-                "eligible": True,
-                "ineligible_reason": None,
-            }
-        ]
+        candidates_considered_dicts = [{
+            "model_id": chosen_candidate.model_id,
+            "provider_name": chosen_candidate.provider_name,
+            "model_name": chosen_candidate.model_name,
+            "estimated_quality": chosen_candidate.estimated_quality,
+            "estimated_cost_usd": str(estimate_cost(
+                complexity.input_tokens_estimated,
+                expected_output_tokens,
+                chosen_candidate.pricing,
+            ).total_cost_usd),
+            "eligible": True,
+            "ineligible_reason": None,
+        }]
         fallback_triggered = False
     else:
-        router = ModelRouter()
-        constraints = RoutingConstraints(min_quality=min_quality, remaining_budget_usd=remaining_budget_usd)
+        router = ModelRouter(strategy=routing_strategy)
+        constraints = RoutingConstraints(
+            min_quality=min_quality,
+            remaining_budget_usd=remaining_budget_usd,
+        )
         decision = router.route(
             candidates,
             input_tokens=complexity.input_tokens_estimated,
@@ -114,42 +124,47 @@ def run_request_pipeline(
             constraints=constraints,
         )
         chosen_candidate = decision.chosen
-        routing_strategy = decision.routing_strategy
+        routing_strategy_used = decision.routing_strategy
         routing_reason = decision.chosen_reason
         candidates_considered_dicts = [c.as_dict() for c in decision.candidates_considered]
         fallback_triggered = decision.fallback_triggered
 
-    # Estimated cost, pre-call
-    est_breakdown = estimate_cost(complexity.input_tokens_estimated, expected_output_tokens, chosen_candidate.pricing)
+    if chosen_candidate is None:
+        raise AppError("Routing did not return a model")
 
-    # Send the actual request
-    adapter = get_adapter(chosen_candidate.provider_name, chosen_candidate.model_name, chosen_candidate.context_limit)
-    params = RequestParams(max_output_tokens=expected_output_tokens)
-    request_status = "success"
-    try:
-        provider_response = adapter.send_request(prompt, params)
-    except AppError:
-        request_status = "failed"
-        raise  # API layer decides whether/how to fall back - see route_with_fallback for that path
+    est_breakdown = estimate_cost(
+        complexity.input_tokens_estimated,
+        expected_output_tokens,
+        chosen_candidate.pricing,
+    )
 
-    # Actual cost, post-call - always from the provider's own reported usage
-    act_breakdown = actual_cost(provider_response.input_tokens, provider_response.output_tokens, chosen_candidate.pricing)
+    adapter = get_adapter(
+        chosen_candidate.provider_name,
+        chosen_candidate.model_name,
+        chosen_candidate.context_limit,
+    )
+    provider_response = adapter.send_request(
+        prompt,
+        RequestParams(max_output_tokens=expected_output_tokens),
+    )
 
-    # Quality (rubric - free, runs on every request; LLM-judge is opt-in
-    # and costs an extra call, wired up by callers that want it)
+    act_breakdown = actual_cost(
+        provider_response.input_tokens,
+        provider_response.output_tokens,
+        chosen_candidate.pricing,
+    )
     quality = RubricEvaluator().evaluate(prompt, provider_response, expected_output_tokens)
 
-    # Persist everything
     request_row = orm.RequestLog(
         user_id=user_id,
         mode=mode,
         prompt_text=prompt,
         estimated_complexity=complexity.complexity,
         model_id=uuid.UUID(chosen_candidate.model_id),
-        status=request_status,
+        status="success",
     )
     db.add(request_row)
-    db.flush()  # assign request_row.id without committing yet
+    db.flush()
 
     db.add(orm.ResponseLog(
         request_id=request_row.id,
@@ -175,7 +190,7 @@ def run_request_pipeline(
     ))
     db.add(orm.OptimizationResult(
         request_id=request_row.id,
-        routing_strategy=routing_strategy,
+        routing_strategy=routing_strategy_used,
         candidates_considered=candidates_considered_dicts,
         chosen_model_id=uuid.UUID(chosen_candidate.model_id),
         chosen_reason=routing_reason,
