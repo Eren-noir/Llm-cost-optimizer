@@ -15,14 +15,17 @@ The project investigates whether intelligent, per-task model selection can reduc
 - Historical pricing representation
 - Task-complexity estimation
 - Quality-constrained model routing
-- Baseline cheapest-eligible routing strategy
-- Weighted cost/quality routing strategy
-- Bounded fallback decisions
+- Transparent cheapest-eligible baseline strategy
+- Weighted cost/quality/latency routing strategy
+- Bounded fallback decision generation
 - Rubric-based quality evaluation and optional LLM judging
-- Request pipeline connecting analysis → routing → provider → cost → evaluation → persistence
+- End-to-end request pipeline: analysis → routing → provider → cost → evaluation → persistence
 - Dashboard API and React frontend
+- Routing-strategy controls in the dashboard
 - Monthly what-if cost simulator
-- Benchmark task dataset for controlled experiments
+- Controlled benchmark task dataset
+- Reproducible benchmark collection and offline strategy replay tooling
+- CI for backend tests and frontend builds
 
 ## Architecture
 
@@ -35,7 +38,7 @@ FastAPI
   ↓
 Task Analyzer
   ↓
-Model Router ← Pricing / Model Registry
+Model Router ← Pricing / Model Registry / Historical Latency
   ↓
 Provider Adapter
   ├── OpenAI
@@ -56,7 +59,8 @@ Dashboard / Experiments
 ```text
 backend/       FastAPI application, routing, providers, cost engine and evaluation
 frontend/      React/Vite dashboard
-benchmarks/    Controlled benchmark tasks
+benchmarks/    Controlled benchmark tasks and ignored generated results
+experiments/   Benchmark collection and offline analysis tools
 docs/          Requirements, architecture, database and research documentation
 ```
 
@@ -79,6 +83,11 @@ python -m venv .venv
 # Windows: .venv\\Scripts\\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+Create `backend/.env` from `backend/.env.example`, apply `backend/migrations/001_initial_schema.sql` to PostgreSQL, populate the model/pricing registry, then run:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
@@ -100,11 +109,20 @@ Copy `backend/.env.example` to a local `.env` and provide credentials there. **N
 
 ## Research methodology
 
-The benchmark compares a baseline strategy against intelligent routing across simple, medium, and complex tasks. Evaluation should report cost, token usage, latency, response quality, and savings. Results must be generated from actual controlled runs; this repository does not contain fabricated experimental results.
+The benchmark compares a transparent cheapest-eligible baseline against weighted routing across simple, medium, and complex tasks. Each task is first collected independently on every active model. Routing strategies are then replayed offline from pre-request signals, while the selected model's observed cost, quality and latency are used for evaluation. This prevents extra provider calls from being required just to compare strategies.
+
+Run the benchmark with:
+
+```bash
+python experiments/run_benchmark.py --base-url http://localhost:8000
+python experiments/analyze_results.py benchmarks/results/raw_results.json
+```
+
+Benchmark execution makes real provider calls and may incur API charges. Results are intentionally not fabricated or committed automatically.
 
 ## Project status
 
-The backend currently contains the core routing, provider, cost, evaluation, and API pipeline. The React dashboard and monthly cost simulator are now being developed. Benchmark execution, empirical optimization, and final validation remain to be completed.
+The software foundation is implemented through the routing, evaluation, frontend, simulator and benchmark-tooling stages. The remaining research work is empirical: populate and verify the current model/pricing registry, run controlled provider experiments, repeat runs where practical, analyze cost/quality/latency trade-offs, and document the actual findings.
 
 ## License
 
