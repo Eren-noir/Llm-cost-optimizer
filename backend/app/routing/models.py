@@ -45,9 +45,9 @@ class CandidateEvaluation:
     model_name: str
     estimated_quality: int
     estimated_cost: CostBreakdown
-    expected_latency_ms: int | None
     eligible: bool
     ineligible_reason: str | None = None
+    expected_latency_ms: int | None = None
 
     def as_dict(self) -> dict:
         return {
