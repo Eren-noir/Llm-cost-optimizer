@@ -1,7 +1,4 @@
-"""
-API endpoints for submitting tasks - the three operating modes from
-docs/01-requirements.md FR2: manual, comparison, auto.
-"""
+"""API endpoints for task submission and controlled model comparison."""
 from __future__ import annotations
 
 import uuid
@@ -20,12 +17,9 @@ router = APIRouter(prefix="/api/requests", tags=["requests"])
 
 
 def _get_or_create_demo_user(db: Session) -> uuid.UUID:
-    """Placeholder until real auth is wired up - the MVP demo/dev flow
-    uses a single implicit user, matching the 'simple secure
-    authentication mechanism if required' allowance in
-    docs/01-requirements.md §15. Real multi-user auth is out of scope
-    for the MVP (docs/01-requirements.md §12)."""
-    existing = db.execute(select(orm.User).where(orm.User.email == "demo@local")).scalar_one_or_none()
+    existing = db.execute(
+        select(orm.User).where(orm.User.email == "demo@local")
+    ).scalar_one_or_none()
     if existing:
         return existing.id
     user = orm.User(email="demo@local", password_hash="not-used-in-demo-mode")
@@ -69,9 +63,6 @@ def _to_result_out(request_row: orm.RequestLog, db: Session) -> TaskResultOut:
 
 @router.post("", response_model=TaskResultOut)
 def submit_task(payload: SubmitTaskRequest, db: Session = Depends(get_db)):
-    """Handles manual and auto modes (single model in, single result
-    out). Comparison mode (fan-out to several models) is a separate
-    endpoint below since its response shape is fundamentally different."""
     if payload.mode == "comparison":
         raise AppError("Use POST /api/requests/compare for comparison mode.")
 
@@ -84,22 +75,32 @@ def submit_task(payload: SubmitTaskRequest, db: Session = Depends(get_db)):
         min_quality=payload.min_quality,
         remaining_budget_usd=payload.remaining_budget_usd,
         manual_model_id=payload.manual_model_id,
+        routing_strategy=payload.routing_strategy,
     )
     return _to_result_out(request_row, db)
 
 
 @router.post("/compare", response_model=list[TaskResultOut])
 def compare_models(payload: SubmitTaskRequest, db: Session = Depends(get_db)):
-    """Mode 2 (docs/01-requirements.md §10): send the same prompt to
-    multiple models and return all results for side-by-side comparison."""
-    if not payload.model_ids:
-        raise AppError("model_ids is required for comparison mode (list of 2+ model IDs).")
+    """Send the same prompt to selected models for side-by-side evaluation.
+
+    The comparison mode is deliberately manual: it measures each model
+    independently so benchmark analysis can replay routing strategies without
+    making additional model calls.
+    """
+    if not payload.model_ids or len(payload.model_ids) < 2:
+        raise AppError("model_ids must contain at least two model IDs for comparison mode.")
 
     user_id = _get_or_create_demo_user(db)
     results = []
     for model_id in payload.model_ids:
         request_row = run_request_pipeline(
-            db, user_id=user_id, prompt=payload.prompt, mode="manual", manual_model_id=model_id,
+            db,
+            user_id=user_id,
+            prompt=payload.prompt,
+            mode="comparison",
+            min_quality=payload.min_quality,
+            manual_model_id=model_id,
         )
         results.append(_to_result_out(request_row, db))
     return results
