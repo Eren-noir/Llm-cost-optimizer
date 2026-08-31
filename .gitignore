@@ -27,3 +27,8 @@ build/
 backend/venv/
 backend/.pytest_cache/
 backend/**/__pycache__/
+
+# Generated benchmark results
+benchmarks/results/*.json
+benchmarks/results/*.csv
+!benchmarks/results/.gitkeep
